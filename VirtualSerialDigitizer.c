@@ -371,6 +371,9 @@ void mxt_list_types()
 	uint16_t addr_lsbf; //least significant byte first.
 	uint16_t addr_msbf; //most significant byte first.
 
+	int xrange;
+	int error;
+
 	for(int i=7;i< (info_blk_size-7-6); i+=6)
 	{
 		addr_lsbf = info_blk[i+1] | ((uint16_t)info_blk[i+2] << 8);
@@ -381,6 +384,17 @@ void mxt_list_types()
 	}
 
 	printf_P(PSTR("t100_addr: %u\n"),t100_addr);
+
+	#define MXT_T100_XRANGE		13
+	if( (error = i2c_recv(t100_addr + MXT_T100_XRANGE-1,&xrange,2)) != 0 )
+	{
+		MyPrintpair("i2c reg: ",xrange);
+		MyPrintpairln(" i2c_recv() error: ",error);
+	}
+	else
+	{
+		printf_P(PSTR("xrange: %u\r\n"), xrange);
+	}
 
 }
 
@@ -472,6 +486,9 @@ void mxt_check_crc(uint8_t *mem, uint8_t crc_area_size)
 }
 
 */
+
+
+
 
 void mxt_word(uint16_t reg)
 {
