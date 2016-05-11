@@ -4,6 +4,8 @@
 
 int i2c_recv(uint16_t addr, uint8_t *buf, int count);
 int i2c_send(uint16_t addr, const uint8_t *buf, int count);
+int i2c_recv_checksum(uint16_t addr, uint8_t *buf, int count);
+int i2c_send_checksum(uint16_t addr, const uint8_t *buf, int count);
 
 void TWI_Init(void);
 void TWI_Start(void);

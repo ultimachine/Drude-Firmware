@@ -27,7 +27,7 @@ static void MyPrint(char *msg)
 	}
 }
 
-static void MyPrintnum(int num) /* Print Number */
+static void MyPrintnum(unsigned int num) /* Print Number */
 {
 	char str[6];
 	MyPrint( itoa(num, str, 10) );  //Base 10

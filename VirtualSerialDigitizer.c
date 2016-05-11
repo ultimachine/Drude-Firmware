@@ -189,6 +189,12 @@ void HandleSerial(void)
 
 uint16_t value;
 
+uint8_t crc8(unsigned char, unsigned char);
+uint8_t crc81(unsigned char, unsigned char);
+void mxt_write_checksum(uint16_t, uint8_t);
+void mxt_read_checksum(uint16_t);
+void proc_msgs();
+
 void execute_command(){
 	//if(strcmp_PF(cmd, PSTR("hi")) == 0)
 	if(strncmp(cmd, "hi", 2) == 0)
@@ -203,10 +209,13 @@ void execute_command(){
 	else if(strncmp(cmd, "read ", 5) == 0)
 	{
 		int val;
+		uint8_t grrvalue;
 		val = atoi(cmd+5);
 		//MyPrintpairln("read: ",val);
+		printf_P(PSTR("read %u \n"),val);
 
-		mxt_read(val);
+		i2c_recv_checksum(val,&grrvalue,1);
+		printf_P(PSTR("grrvalue %u \n ") ,grrvalue);
 	}
 
 	else if(strncmp(cmd, "write ", 6) == 0)
@@ -222,6 +231,14 @@ void execute_command(){
 	{
 		value = atoi(cmd+6);
 		MyPrintpairln("value: ",value);
+	}
+
+
+	else if(strncmp(cmd, "crc ", 4) == 0)
+	{
+		//value = atoi(cmd+4);
+		//MyPrintpairln("value: ",value);
+		printf_P(PSTR("value: %u 0x%x crc8: %u 0x%x \n"),value,value,crc8(0,value),crc81(0,value) );
 	}
 
 	else if(strncmp(cmd, "word ", 5) == 0)
@@ -252,14 +269,55 @@ void execute_command(){
 	{
 		printFreeMem();
 	}
+	else if(strcmp_P(cmd,PSTR( "rep")) == 0)
+	{
+		mxt_get_T5_reports();
+		mxt_get_T100_reports();
+		mxt_read_num_messages();
+	}
+	else if(strcmp_P(cmd,PSTR( "msg")) == 0)
+	{
+		mxt_read_T5_messages();
+	}
+	else if(strcmp_P(cmd,PSTR( "proc")) == 0)
+	{
+		proc_msgs();
+	}
+	else if(strcmp_P(cmd,PSTR( "rall")) == 0)
+	{
+		mxt_write_T6_report_all();
+	}
 	else
-		{
-		MyPrintpgmln("Unknown! command list: hi, init");
+	{
+		printf_P(PSTR("Unknown! command list: hi, init"));
 	}
 
-	MyPrintpgm("#> ");
+	printf_P(PSTR("> "));
 
 }
+
+int __mxt_read_reg(uint16_t reg, uint16_t len, void *val)
+{
+	int ret;
+
+	ret = i2c_recv(reg, val, len);
+	if (ret)
+		printf_P(PSTR("__mxt_read_reg(%04x, %04x, %04x) errorcode: %04x\n"), reg, len, (unsigned int) val, ret);
+
+	return ret;
+}
+
+int __mxt_write_reg(uint16_t reg, uint16_t len, const void *val)
+{
+	int ret;
+
+	ret = i2c_send(reg, val, len);
+	if (ret)
+		printf_P(PSTR("__mxt_write_reg() failed: %04x\n"), ret);
+
+	return ret;
+}
+
 
 
 uint8_t mxt_get_num_objects()
@@ -267,16 +325,16 @@ uint8_t mxt_get_num_objects()
 	int ret;
 	uint8_t val;
 
-	if( (ret = i2c_recv(6,&val,1)) != 0 ) //Address 6
-	{
-		MyPrintpairln("mxt_get_num_objects(): i2c_recv error: ",ret);
+	ret = __mxt_read_reg(6,1,&val);  //Address 6
+	printf_P(PSTR("num objects: "));
+	if(ret){
+		printf_P(PSTR("error\n"));
 		return 0;
 	}
 	else
 	{
-		MyPrintpairln("num objects: ",val);
+		printf_P(PSTR("%u\n"),val);
 		return val;
-
 	}	
 }
 
@@ -288,7 +346,7 @@ uint32_t mxt_get_info_checksum(uint16_t csum_addr)
 
 	if( (ret = i2c_recv(csum_addr, &csum_array, 3)) != 0 ) //Address 6
 	{
-		MyPrintpairln("mxt_get_info_checksum(): i2c_recv error: ",ret);
+		printf_P(PSTR("mxt_get_info_checksum(): i2c_recv error: %u"),ret);
 		return 0xffffffff;
 	}
 	else
@@ -304,31 +362,23 @@ void mxt_header()
 {
 	int ret;
 	uint8_t val[7];
-	//uint8_t *val;
 
+	//uint8_t *val;
 	//if( (val = malloc(7)) == NULL ) MyPrintpgmln("malloc(7) error");
 
-	if( (ret = i2c_recv(0,&val,7)) != 0 ) //Address 6
+	if( (ret = i2c_recv(0,&val,7)) != 0 )
 	{
-		MyPrintpairln("mxt_get_num_objects(): i2c_recv error: ",ret);
+		printf_P(PSTR("mxt_header(): i2c_recv error: %u"),ret);
 		return;
 	}
 
-	printFreeMem();
-
-	MyPrintpgm("header:");
-	for(int i=0;i<7;i++)
-	{
-		MyPrintpgm(" ");
-		//MyPrintnum( *(val + i) );
-		MyPrintnum( val[i] );
-	}
-	MyEOL();
+	printf_P(PSTR("header: %u %u %u %u %u %u %u\n"),val[0],val[1],val[2],val[3],val[4],val[5],val[6]);
 }
 
 
 /* Update 24-bit CRC with two new bytes of data */
-uint32_t crc24_step(uint32_t crc, uint8_t byte1, uint8_t byte2){
+uint32_t crc24_step(uint32_t crc, uint8_t byte1, uint8_t byte2)
+{
 	const uint32_t crcpoly = 0x80001b;
 	uint16_t data = byte1 | (byte2 << 8);
 	uint32_t result = data ^ (crc << 1);
@@ -364,36 +414,233 @@ uint32_t crc24_block(uint32_t crc, const uint8_t *data, uint8_t len)
 uint8_t info_blk[253];
 uint8_t info_blk_size;
 uint8_t num_objects;
-uint16_t t100_addr;
+
+uint8_t msg_buf[100];
+
+uint16_t T5_addr;
+uint8_t T5_size;
+uint8_t T5_reports;
+uint8_t T5_reports_address;
+
+uint16_t T6_addr;
+
+uint16_t T44_addr;
+uint8_t T44_msg_count;
+
+uint16_t T100_addr;
+uint8_t T100_size;
+uint8_t T100_reports;
+uint8_t T100_reports_address;
+
+
+void mxt_read_num_messages()
+{
+	uint8_t ret;
+
+	ret = __mxt_read_reg(T44_addr, 1, &T44_msg_count);
+	printf_P(PSTR("num_messages: "));
+	if(ret)
+	{
+		printf_P(PSTR("error\n"));
+		T44_msg_count = 0;
+	}
+	else
+	{
+		printf("%u\n",T44_msg_count);
+	}
+}
+
+void mxt_T46_check_config()
+{
+	uint8_t ret;
+
+	ret = __mxt_read_reg(T44_addr, 1, &T44_msg_count);
+	printf_P(PSTR("num_messages: "));
+	if(ret)
+	{
+		printf_P(PSTR("error\n"));
+		T44_msg_count = 0;
+	}
+	else
+	{
+		printf("%u\n",T44_msg_count);
+	}
+}
+
+
+void mxt_write_T6_report_all()
+{
+	uint8_t ret;
+	uint8_t val = 1;
+	if( ret = i2c_send(T6_addr+3, &val, 1) != 0)
+	{
+		printf_P(PSTR("i2c_send error: %u\n"), ret);
+		return ret;
+	}
+}
+
+void mxt_read_T5_messages()
+{
+	uint8_t ret;
+	uint8_t crc;
+
+	mxt_read_num_messages();
+
+	if(T44_msg_count == 0) 
+	{
+		printf_P(PSTR("No Messages.\n"));
+		return;
+	}
+
+
+	printf_P(PSTR("T5_address: %u\n"), T5_addr);
+
+	if( ret = i2c_recv(T5_addr, &msg_buf, (T5_size+1) * T44_msg_count ) != 0)  //+0x8000 
+	{
+		printf_P(PSTR("i2c_recv error: %u\n"), ret);
+		return;
+	}
+
+	for(uint8_t msg_count=0; msg_count < T44_msg_count; msg_count++)
+	{
+		uint8_t msg_index = msg_count * (T5_size+1);
+		printf_P(PSTR("msg%u: "), msg_count);
+		for(uint8_t i = 0; i <= T5_size; i++)
+		{
+			printf_P(PSTR(" %u"),msg_buf[msg_index+i]);
+		}
+		printf("\n");
+	}
+
+	printf_P(PSTR("T5_address_checksum: %x\n"), T5_addr | 0x8000);
+
+	if( ret = i2c_recv_checksum(T5_addr, &msg_buf, (T5_size+1) * T44_msg_count ) != 0)  //+0x8000 
+	{
+		printf_P(PSTR("i2c_recv error: %u\n"), ret);
+		return;
+	}
+
+	for(uint8_t msg_count=0; msg_count < T44_msg_count; msg_count++)
+	{
+		uint8_t msg_index = msg_count * (T5_size+1);
+		printf_P(PSTR("msg%u: "), msg_count);
+		for(uint8_t i = 0; i <= T5_size; i++)
+		{
+			printf_P(PSTR(" %u"),msg_buf[msg_index+i]);
+		}
+		printf("\n");
+	}
+
+		crc=0;
+		printf_P(PSTR("msg:"));
+		for(uint8_t i = 0; i <= T5_size; i++)
+		{
+			if(i<T5_size) crc=crc8(crc,msg_buf[i]);
+			printf_P(PSTR(" %u"),msg_buf[i]);
+		}
+		printf_P(PSTR("   crc8: %u \n"),crc);
+
+}
+
+#define MSG_SIZE 11
+void proc_msgs()
+{
+	uint8_t ret;
+	uint8_t crc;
+	uint8_t msgdata[MSG_SIZE];
+	
+	mxt_read_num_messages();
+
+	while(T44_msg_count)
+	{
+			ret = i2c_start(T44_addr);
+			if(ret) { printf_P(PSTR("i2c_recv error: %u\n"), ret); return; }
+			ret = i2c_read(&msgdata,MSG_SIZE);
+			if(ret) { printf_P(PSTR("i2c_recv error: %u\n"), ret); return; }
+
+			T44_msg_count = msgdata[0];
+			
+			crc=0;
+			printf_P(PSTR("msg:"));
+			for(uint8_t i = 0; i < MSG_SIZE; i++)
+			{
+					if(i<T5_size) crc=crc8(crc,msgdata[i]);
+					printf_P(PSTR(" %u"),msgdata[i]);
+			}
+			printf_P(PSTR("   crc8: %u \n"),crc);
+	}
+	
+	TWI_Stop();	
+
+}
+
+void mxt_get_T5_reports()
+{
+	uint8_t ret;
+	if( ret = i2c_recv(T5_reports_address, &T5_reports, 1) != 0)
+	{
+		printf_P(PSTR("i2c_recv error: %u\n"), ret);
+	}
+	printf_P(PSTR("T5 Reports: %u\n"), T5_reports);
+}
+
+void mxt_get_T100_reports()
+{
+	uint8_t ret;
+	if( ret = i2c_recv(T100_reports_address, &T5_reports, 1) != 0)
+	{
+		printf_P(PSTR("i2c_recv error: %u\n"), ret);
+	}
+	printf_P(PSTR("T100 Reports: %u\n"), T5_reports);
+}
+
 
 void mxt_list_types()
 {
 	uint16_t addr_lsbf; //least significant byte first.
-	uint16_t addr_msbf; //most significant byte first.
 
-	int xrange;
+	uint8_t xrange[2];
 	int error;
+
+	mxt_init();
 
 	for(int i=7;i< (info_blk_size-7-6); i+=6)
 	{
 		addr_lsbf = info_blk[i+1] | ((uint16_t)info_blk[i+2] << 8);
-		addr_msbf = ( (uint16_t)info_blk[i+1]<<8) | info_blk[i+2];
-		//printf_P(PSTR("Type: %u, lsb: %u, msb: %u size: %u instances: %u reports: %u\n"), info_blk[i], info_blk[i+1], info_blk[i+2],info_blk[i+3],info_blk[i+4], info_blk[i+5] );
-		printf_P(PSTR("Type: %u, addr_lsbf: %u, addr_msbf: %u size: %u instances: %u reports: %u\n"), info_blk[i], addr_lsbf, addr_msbf, info_blk[i+3],info_blk[i+4], info_blk[i+5] );
-		if(info_blk[i] == 100) t100_addr = addr_lsbf;
+		//addr_msbf = ( (uint16_t)info_blk[i+1]<<8) | info_blk[i+2];
+		printf_P(PSTR("Type: %u, addr: %u size: %u instances: %u reports: %u\n"), info_blk[i], addr_lsbf, info_blk[i+3], info_blk[i+4], info_blk[i+5] );
+		if(info_blk[i] == 5) 
+		{
+			T5_addr = addr_lsbf;
+			T5_size = info_blk[i+3];
+			T5_reports = info_blk[i+5];
+			T5_reports_address=i+5;
+		}
+
+		if(info_blk[i] == 6) T6_addr = addr_lsbf;
+
+		if(info_blk[i] == 44) T44_addr = addr_lsbf;
+
+		if(info_blk[i] == 100) 
+		{
+			T100_addr = addr_lsbf;
+			T100_size = info_blk[i+3];
+			T100_reports = info_blk[i+5];
+			T100_reports_address=i+5;
+		}
 	}
 
-	printf_P(PSTR("t100_addr: %u\n"),t100_addr);
+	printf_P(PSTR("T100_addr: %u\n"),T100_addr);
 
 	#define MXT_T100_XRANGE		13
-	if( (error = i2c_recv(t100_addr + MXT_T100_XRANGE-1,&xrange,2)) != 0 )
+	if( (error = i2c_recv(T100_addr + MXT_T100_XRANGE,&xrange,2)) != 0 )
 	{
 		MyPrintpair("i2c reg: ",xrange);
 		MyPrintpairln(" i2c_recv() error: ",error);
 	}
 	else
 	{
-		printf_P(PSTR("xrange: %u\r\n"), xrange);
+		printf_P(PSTR("xrange: %u\r\n"), (uint16_t) xrange[1]<<8 | xrange[0] );
 	}
 
 }
@@ -496,7 +743,7 @@ void mxt_word(uint16_t reg)
 	uint8_t val[2];
 	uint16_t word;
 
-	if( (error = i2c_recv(reg,&val,2)) != 0 )
+	if( (error = i2c_recv_checksum(reg,&val,2)) != 0 )
 	{
 		MyPrintpair("i2c reg: ",reg);
 		MyPrintpairln(" i2c_recv() error: ",error);
@@ -526,20 +773,133 @@ void mxt_read(uint16_t reg)
 	}
 }
 
+uint8_t crc81(unsigned char crc, unsigned char data)
+{
+	static const uint8_t crcpoly = 0x8c;
+	uint8_t fb;
+
+	for(uint8_t i=0;i<8;i++) {
+		fb = (crc ^ data) & 0x01;
+		data >>= 1;
+		crc >>= 1;
+		if (fb) crc ^= crcpoly;
+	}
+
+	return crc;
+}
+
+uint8_t crc8(unsigned char crc, unsigned char data)
+{
+static const uint8_t crcpoly = 0x8c;
+uint8_t index;
+uint8_t fb;
+index = 8;
+do
+{
+fb = (crc ^ data) & 0x01;
+data >>= 1;
+crc >>= 1;
+if (fb)
+crc ^= crcpoly;
+} while (--index);
+return crc;
+}
+
 void mxt_write(uint16_t reg,uint8_t val)
 {
 	int error;
-	if( (error = i2c_send(reg,val,1)) != 0 )
+	uint8_t vals[2];
+	uint8_t crc;
+	
+	crc=crc8(0, (uint8_t)(reg & 0x00FF) );
+	crc=crc8(crc, (uint8_t)((reg>>8)|0x80) );
+	crc=crc8(crc,val);
+
+        vals[0]=val;
+	vals[1]=crc;
+	
+
+	if( (error = i2c_send(reg | 0x8000 ,vals,2)) != 0 )
 	{
-		MyPrintpair("i2c reg: ",reg);
+		MyPrintpair("i2c reg: ",reg | 0x8000);
 		MyPrintpairln(" i2c_recv() error: ",error);
 	}
 	else
 	{
-		MyPrintpair("i2c reg: ",reg);
-		MyPrintpairln(" write: ",val);
+		//MyPrintpair("i2c reg: ",reg | 0x8000);
+		//MyPrintpair(" write: ",val);
+		//MyPrintpairln(" crc8: ",vals[1]);
+		printf_P(PSTR("i2c reg: %u val: %u crc8: %u \n"), reg, vals[0], vals[1] );
 		//printf_P(PSTR("i2c reg: %u val: %u 0x%x \r\n"), reg, val, val);
 
+	}
+}
+
+void mxt_write_checksum(uint16_t reg,uint8_t val)
+{
+	int error;
+
+	if( (error = i2c_send(reg,val,1)) != 0 )
+	{
+		MyPrintpair("i2c reg: ",reg | 0x8000);
+		MyPrintpairln(" i2c_recv() error: ",error);
+	}
+	else
+	{
+		printf_P(PSTR("i2c reg: 0x%04x  val: 0x%02x \n"), reg, val );
+	}
+}
+
+void mxt_write_checksumOLD(uint16_t reg,uint8_t val)
+{
+	int error;
+	uint8_t vals[2];
+	uint8_t crc;
+
+	reg = reg | 0x8000; //checksum mode - the address most significant bit set to '1'
+	
+	crc=crc8(0, (uint8_t)(reg & 0x00FF) );
+	crc=crc8(crc, (uint8_t)(reg>>8));
+	crc=crc8(crc,val);
+
+        vals[0]=val;
+	vals[1]=crc;
+
+	printf_P(PSTR("i2c reg_lsb: 0x%02x reg_msb: 0x%02x val: 0x%02x  crc8: 0x%02x \n"), (uint8_t)(reg & 0x00FF),(uint8_t)(reg>>8), vals[0], vals[1] );
+
+	if( (error = i2c_send(reg,vals,2)) != 0 )
+	{
+		MyPrintpair("i2c reg: ",reg);
+		MyPrintpairln(" i2c_recv() error: ",error);
+	}
+}
+
+
+void mxt_read_checksum(uint16_t reg)
+{
+	int error;
+	uint8_t vals[2];
+	uint8_t crc;
+	
+	uint8_t readdata[2];
+	uint8_t grr;
+
+	reg = reg | 0x8000; //checksum mode - the address most significant bit set to '1'
+	
+	crc=crc8(0, (uint8_t)(reg & 0x00FF) );
+	crc=crc8(crc, (uint8_t)(reg>>8));
+
+	//printf_P(PSTR("i2c reg_lsb: 0x%02x reg_msb: 0x%02x crc8: 0x%02x \n"), (uint8_t)(reg & 0x00FF),(uint8_t)(reg>>8), crc );
+
+	if( (error = i2c_recv(reg,&grr,1)) != 0 )
+	{
+		MyPrintpair("mxt_read_checksum: i2c reg: ",reg);
+		MyPrintpairln("mxt_read_checksum: i2c_recv() error: ",error);
+	} 
+	else
+	{
+		//printf_P(PSTR("readdata: %u\n"), (uint16_t)(readdata[1]<<8) | (readdata[0] & 0x00FF) );
+		printf_P(PSTR("grr: %u\n"), grr );		
 	}
 }
 
