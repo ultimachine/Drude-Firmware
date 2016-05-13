@@ -123,25 +123,18 @@ int i2c_send_checksum(uint16_t addr, const uint8_t *buf, int count){
 	return 0;
 }
 
-int i2c_start(uint16_t addr)
+uint8_t i2c_start(uint8_t addr)
 {
-	int stat;
+	uint8_t stat;
 
 	TWI_Start();						// First start condition 
 	stat = TWI_GetStatus();
     if (stat != 0x08) return stat;
 
-	TWI_Write((MXT_APP_LOW<<1));		// Chip address + write
+	TWI_Write((addr<<1));		// Chip address + write
 	stat = TWI_GetStatus();
-    if (stat != 0x18) return stat;
-
-	TWI_Write((addr & 0x00FF));			// Address low byte
-	stat = TWI_GetStatus();
-    if (stat != 0x28) return stat;
-
-	TWI_Write(addr>>8 & 0x00FF);		// Address high byte
-	stat = TWI_GetStatus();
-    if (stat != 0x28) return stat;
+    if (stat != 0x18)
+        return stat;
 
     return 0;
 }
