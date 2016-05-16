@@ -25,8 +25,6 @@ uint8_t _crc8(unsigned char crc, unsigned char data)
  * A bit higher level stuff 
  **************************************/
 
-#define MXT_APP_LOW	0x4a
-
 // Receive count bytes from addr
 int i2c_recv_checksum(uint16_t addr, uint8_t *buf, int count){
 	int stat;
@@ -138,6 +136,7 @@ uint8_t i2c_start(uint8_t addr)
 
     return 0;
 }
+
 
 int i2c_read(uint8_t *buf, int count)
 {

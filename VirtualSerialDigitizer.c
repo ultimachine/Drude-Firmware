@@ -216,6 +216,7 @@ void proc_msgs();
 
 const uint8_t PROGMEM init_sequence[] = { 
 SEQ_RESET,
+SEQ_DELAY,
 SEQ_SIZE, 2,
 0x00,0x04,0x04,0x00,
 0x00,0x02,0x00,0x0F,
@@ -566,7 +567,7 @@ uint8_t print_sequence(const uint8_t *buf)
 			_delay_us(10);	//Wait 10 microseconds
 			
 			PORTB |= RESET_PIN; //Set High
-			_delay_ms(100);
+			_delay_ms(10);
 			//DDRB &= ~(RESET_PIN); //Set Input
 
 			continue;
@@ -616,6 +617,10 @@ uint8_t print_sequence(const uint8_t *buf)
 
 void init_screen()
 {
+	//_delay_ms(110); //TOO FAST, WILL NOT TURN ON.
+	//_delay_ms(115); //WORKS
+	//_delay_ms(112); //SOMETIMES WORKED THEN STOPPED WORKING
+	_delay_ms(150);
 	print_sequence(init_sequence);
 }
 
@@ -767,11 +772,11 @@ void execute_command(){
 	else if(strcmp_P(cmd,PSTR( "seq")) == 0)
 	{
 		uint8_t retval;
-		output_debug=1;
+		debug_output=1;
 		retval = print_sequence(init_sequence);
 		TWI_Stop();
 		printf_P(PSTR("\ni2c RET: %02X\n"),retval);
-		output_debug=0;
+		debug_output=0;
 	}
 	else if(strcmp_P(cmd,PSTR( "blink")) == 0)
 	{
@@ -942,6 +947,11 @@ uint8_t T100_reports;
 uint8_t T100_reports_address;
 
 
+uint8_t mxt_get_num_messages()
+{
+	return __mxt_read_reg(T44_addr, 1, &T44_msg_count);	
+}
+
 void mxt_read_num_messages()
 {
 	uint8_t ret;
@@ -1051,6 +1061,30 @@ void mxt_read_T5_messages()
 
 }
 
+
+uint8_t mxg_begin(uint16_t addr)
+{
+       int stat;
+ 
+        TWI_Start();                                            // First start condition 
+        stat = TWI_GetStatus();
+     if (stat != 0x08) return stat;
+ 
+       TWI_Write((MXT_APP_LOW<<1));            // Chip address + write
+        stat = TWI_GetStatus();
+    if (stat != 0x18) return stat;
+
+       TWI_Write((addr & 0x00FF));                     // Address low byte
+       stat = TWI_GetStatus();
+    if (stat != 0x28) return stat;
+
+       TWI_Write(addr>>8 & 0x00FF);            // Address high byte
+       stat = TWI_GetStatus();
+    if (stat != 0x28) return stat;
+ 
+     return 0;
+ }
+
 #define MSG_SIZE 11
 void proc_msgs()
 {
@@ -1062,7 +1096,7 @@ void proc_msgs()
 
 	while(T44_msg_count)
 	{
-			ret = i2c_start(T44_addr);
+			ret = mxg_begin(T44_addr);
 			if(ret) { printf_P(PSTR("i2c_recv error: %u\n"), ret); return; }
 			ret = i2c_read(&msgdata,MSG_SIZE);
 			if(ret) { printf_P(PSTR("i2c_recv error: %u\n"), ret); return; }

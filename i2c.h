@@ -2,6 +2,8 @@
 #ifndef _digi_i2c_h_
 #define _digi_i2c_h_
 
+#define MXT_APP_LOW	0x4a
+
 uint8_t i2c_start(uint8_t addr);
 
 int i2c_recv(uint16_t addr, uint8_t *buf, int count);
