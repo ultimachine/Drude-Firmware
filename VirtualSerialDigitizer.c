@@ -118,6 +118,11 @@ static FILE  mystdin = FDEV_SETUP_STREAM(NULL, my_getchar, _FDEV_SETUP_READ);
 #define RESET_PIN (_BV(PB3))
 void init_screen();
 
+uint8_t debug_output=0;
+uint16_t xpos;
+uint16_t ypos;
+uint8_t touch_available=0;
+
 
 /** Main program entry point. This routine contains the overall program flow, including initial
  *  setup of all components and the main program loop.
@@ -524,7 +529,6 @@ int hdmiconv_send(const uint8_t *buf, int count){
 #endif
 
 uint16_t init_size = ARRAY_SIZE(init_sequence);
-uint8_t debug_output=0;
 
 uint8_t print_sequence(const uint8_t *buf)
 {
@@ -714,8 +718,11 @@ void execute_command(){
 		value = atoi(cmd+6);
 		MyPrintpairln("value: ",value);
 	}
-
-
+	else if(strncmp(cmd, "dbg ", 4) == 0)
+	{
+		debug_output = atoi(cmd+4);
+		printf_P(PSTR("debug_output: %u"),debug_output);
+	}
 	else if(strncmp(cmd, "crc ", 4) == 0)
 	{
 		//value = atoi(cmd+4);
@@ -945,6 +952,8 @@ uint16_t T100_addr;
 uint8_t T100_size;
 uint8_t T100_reports;
 uint8_t T100_reports_address;
+uint8_t T100_report_id_min;
+uint8_t T100_report_id_max;
 
 
 uint8_t mxt_get_num_messages()
@@ -1085,7 +1094,11 @@ uint8_t mxg_begin(uint16_t addr)
      return 0;
  }
 
+
+
+// T44_msg_count byte + report_id byte + 9 byte msg_content
 #define MSG_SIZE 11
+
 void proc_msgs()
 {
 	uint8_t ret;
@@ -1111,12 +1124,46 @@ void proc_msgs()
 					printf_P(PSTR(" %u"),msgdata[i]);
 			}
 			printf_P(PSTR("   crc8: %u \n"),crc);
+			
+			if( (msgdata[1] >= T100_report_id_min) && (msgdata[1] <= (T100_report_id_min+10)) )
+					proc_T100_msg(msgdata+2); // +2 to skip T44_msg_count and report_id
 	}
 	
 	TWI_Stop();	
 
 }
 
+//From atmel_mxt_ts.c
+enum t100_type {
+	MXT_T100_TYPE_FINGER		= 1,
+	MXT_T100_TYPE_PASSIVE_STYLUS	= 2,
+	MXT_T100_TYPE_ACTIVE_STYLUS	= 3,
+	MXT_T100_TYPE_HOVERING_FINGER	= 4,
+	MXT_T100_TYPE_GLOVE		= 5,
+	MXT_T100_TYPE_LARGE_TOUCH	= 6,
+};
+
+// 9byte msg = [0] touch_status, [1] xpos_lsb, [2] xpos_msb, [3] ypos_lsb, [4] ypos_msb ,  [5:8] aux_data
+void proc_T100_msg(uint8_t *msg)
+{
+		uint8_t touch_status = msg[0]; // bits [7] detect, [6:4] type, [3:0] event
+		uint8_t detect = touch_status >> 7; //first most significant bit is the detect bit.
+		uint8_t type = (touch_status >> 4) & 0b0111; // 3 bit type (bits 6-4)
+		uint8_t event = touch_status & 0x0F; // event is last 4 bits.
+		
+		printf_P(PSTR("proc_T100_msg() called.\n"));
+		
+		//if(detect && (type == MXT_T100_TYPE_FINGER)) {
+			xpos = msg[1] | ((uint16_t)msg[2]<<8);
+			ypos = msg[3] | ((uint16_t)msg[4]<<8);
+			touch_available=1;
+			
+			printf_P(PSTR("touch_status: %02X type: %u  detect: %u  event: %u  xpos: %u  ypos: %u\n"), touch_status, type, detect, event, xpos, ypos);
+		//}
+		
+}
+
+//abandoned WIP function?
 void mxt_get_T5_reports()
 {
 	uint8_t ret;
@@ -1127,6 +1174,8 @@ void mxt_get_T5_reports()
 	printf_P(PSTR("T5 Reports: %u\n"), T5_reports);
 }
 
+
+//abandoned WIP function?
 void mxt_get_T100_reports()
 {
 	uint8_t ret;
@@ -1144,14 +1193,32 @@ void mxt_list_types()
 
 	uint8_t xrange[2];
 	int error;
+	
+	uint8_t reportid_start;
+	uint8_t reportid_number_per_instance;
+	uint8_t reportid_total;
+	uint8_t instances;
+	uint8_t reportid_running_total=0;
 
 	mxt_init();
 
+    // [0] = T#-object-type, [1] = config address LSB, [2] = config address MSB, [3] = Config size - 1, [4] =  Object instances - 1, [5] = number of report_ids per instance
 	for(int i=7;i< (info_blk_size-7-6); i+=6)
 	{
+		instances = info_blk[i+4] + 1; // instances start counting from zero, so add one
+		reportid_number_per_instance = info_blk[i+5];
+		reportid_total = instances * reportid_number_per_instance;
+		
+		if(reportid_total) {
+			reportid_start = reportid_running_total + 1;
+			reportid_running_total += reportid_total;
+		}
+		
 		addr_lsbf = info_blk[i+1] | ((uint16_t)info_blk[i+2] << 8);
 		//addr_msbf = ( (uint16_t)info_blk[i+1]<<8) | info_blk[i+2];
-		printf_P(PSTR("Type: %u, addr: %u size: %u instances: %u reports: %u\n"), info_blk[i], addr_lsbf, info_blk[i+3], info_blk[i+4], info_blk[i+5] );
+		printf_P(PSTR("Type: %u, addr: %u size: %u instances: %u reports: %u"), info_blk[i], addr_lsbf, info_blk[i+3], info_blk[i+4], info_blk[i+5] );
+		printf_P(PSTR(" reportid_start: %u  reportid_total: %u  reportid_running_total: %u\n"), reportid_start, reportid_total, reportid_running_total);
+
 		if(info_blk[i] == 5) 
 		{
 			T5_addr = addr_lsbf;
@@ -1170,10 +1237,12 @@ void mxt_list_types()
 			T100_size = info_blk[i+3];
 			T100_reports = info_blk[i+5];
 			T100_reports_address=i+5;
+			T100_report_id_min=reportid_start+2;
 		}
 	}
 
 	printf_P(PSTR("T100_addr: %u\n"),T100_addr);
+	printf_P(PSTR("T100_report_id_min: %u\n"),T100_report_id_min);
 
 	#define MXT_T100_XRANGE		13
 	if( (error = i2c_recv(T100_addr + MXT_T100_XRANGE,&xrange,2)) != 0 )
@@ -1503,15 +1572,26 @@ bool CALLBACK_HID_Device_CreateHIDReport(USB_ClassInfo_HID_Device_t* const HIDIn
 {
 	USB_DigitizerReport_Data_t* DigitizerReport = (USB_DigitizerReport_Data_t*)ReportData;
 
-    if (1) 
+    if (touch_available) 
     {
-        DigitizerReport->X = 100; 
-        DigitizerReport->Y = 150; 
+		if(debug_output) printf("usb hid digizer reported!\n");
+		touch_available=0;
+        DigitizerReport->X = xpos; 
+        DigitizerReport->Y = ypos; 
         //DigitizerReport->Finger =0x03; 
         //DigitizerReport->Temp= 0x00; 
-    } 
 
-    *ReportSize = sizeof(USB_DigitizerReport_Data_t);
+
+    //DigitizerReport->Tip_and_InRange       = (status & MXT_RELEASE) ? 0x00 : 0x03; //0x00 down 0x03 up?
+    DigitizerReport->Tip_and_InRange       = 0x03; //0x00 down 0x03 up?
+	DigitizerReport->Contact_identifier    = 0;
+	DigitizerReport->Contact_count_max     = 4;	
+
+        *ReportSize = sizeof(USB_DigitizerReport_Data_t);
+    } else {
+		*ReportSize = 0;
+	}
+
     return true;
 }
 
