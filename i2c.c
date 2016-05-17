@@ -142,9 +142,9 @@ int i2c_read(uint8_t *buf, int count)
 {
 	int stat;
 	
-	TWI_Start();						// Second start condition 	
+	TWI_Start();						// First or Second start condition 	
 	stat = TWI_GetStatus();
-    if (stat != 0x10) return stat;
+    if ((stat != 0x10) && stat != 0x08) return stat;
 
 	TWI_Write((MXT_APP_LOW<<1) | 0x01);	// Chip address + read
 	stat = TWI_GetStatus();

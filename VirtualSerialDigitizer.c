@@ -122,6 +122,7 @@ uint8_t debug_output=0;
 uint16_t xpos;
 uint16_t ypos;
 uint8_t touch_available=0;
+uint8_t msgs_available=0;
 
 
 /** Main program entry point. This routine contains the overall program flow, including initial
@@ -140,10 +141,16 @@ int main(void)
 	//DDRB &= ~RESET_PIN; //Set Input
 	PORTB |= RESET_PIN; //Set High
 	DDRB |= RESET_PIN; //Set Output
+	
+	//DDRB &= ~(_BV(7)); //PB7 input
+	//PORTB &= ~(1<<PB7); //PB7 low
+	//PORTB |= (_BV(7)); //Set high (input pullup)
 
 	RingBuffer_InitBuffer(&FromHost_Buffer, FromHost_Buffer_Data, sizeof(FromHost_Buffer_Data));
 
 	init_screen();
+	
+	mxt_list_types();
 
 	for (;;)
 	{
@@ -151,6 +158,7 @@ int main(void)
 		CDC_Device_USBTask(&VirtualSerial_CDC_Interface);
 		HID_Device_USBTask(&Digitizer_HID_Interface);
 		USB_USBTask();
+		HandleDigitizer();
 	}
 }
 
@@ -169,8 +177,30 @@ void SetupHardware(void)
 	USB_Init();
 
 	TWI_Init();
+/*
+    PCICR |= (1 << PCIE0);     // enable PCMSK0 scan on PCIE0
+    PCMSK0 |= (1 << PCINT7);   // PCINT7 (PB7) to trigger interrupt on pin change
+	sei();
+*/
+
 }
 
+ISR (PCINT0_vect) {
+	if ( (PINB &(1<<PB7)) == 0 ) {
+		msgs_available = 1;
+		if(debug_output) printf("PB7low\n");
+	} else {
+		if(debug_output) printf("PB7high\n");
+	}
+	
+}
+
+void HandleDigitizer()
+{
+	if ( (PINB &(1<<PB7)) == 0 ) msgs_available = 1;
+	//if( (1<<PB7)&PINB == 0 ) proc_msgs();
+	if( msgs_available ) proc_msgs();
+}
 
 void HandleSerial(void)
 {
@@ -507,7 +537,7 @@ SEQ_END
 
 #define HDMICONV_ADDR 0x0F //0x1F
 
-
+/*
 // THIS FUNCTION UNDER CONSTRUCTION
 int hdmiconv_send(const uint8_t *buf, int count){
 	int stat;
@@ -522,6 +552,7 @@ int hdmiconv_send(const uint8_t *buf, int count){
 
 	return 0;
 }
+* */
 
 
 #if !defined(ARRAY_SIZE)
@@ -803,6 +834,10 @@ void execute_command(){
 		PORTE &= ~(_BV(PE6)); //Set Low
 		_delay_ms(500);
 	}
+	else if(strcmp_P(cmd,PSTR( "pb7")) == 0)
+	{
+		printf_P(PSTR("pb7: %u \n"),  (_BV(PB7)&PINB) );
+	}
 	else if(strcmp_P(cmd,PSTR( "scan")) == 0)
 	{
 		printf_P(PSTR("Starting i2c scan\n"));
@@ -823,7 +858,7 @@ int __mxt_read_reg(uint16_t reg, uint16_t len, void *val)
 
 	ret = i2c_recv(reg, val, len);
 	if (ret)
-		printf_P(PSTR("__mxt_read_reg(%04x, %04x, %04x) errorcode: %04x\n"), reg, len, (unsigned int) val, ret);
+		if(debug_output) printf_P(PSTR("__mxt_read_reg(%04x, %04x, %04x) errorcode: %04x  "), reg, len, (unsigned int) val, ret);
 
 	return ret;
 }
@@ -834,7 +869,7 @@ int __mxt_write_reg(uint16_t reg, uint16_t len, const void *val)
 
 	ret = i2c_send(reg, val, len);
 	if (ret)
-		printf_P(PSTR("__mxt_write_reg() failed: %04x\n"), ret);
+		if(debug_output) printf_P(PSTR("__mxt_write_reg() failed: %04x\n"), ret);
 
 	return ret;
 }
@@ -847,14 +882,14 @@ uint8_t mxt_get_num_objects()
 	uint8_t val;
 
 	ret = __mxt_read_reg(6,1,&val);  //Address 6
-	printf_P(PSTR("num objects: "));
+	if(debug_output) printf_P(PSTR("num objects: "));
 	if(ret){
-		printf_P(PSTR("error\n"));
+		if(debug_output) printf_P(PSTR("error\n"));
 		return 0;
 	}
 	else
 	{
-		printf_P(PSTR("%u\n"),val);
+		if(debug_output) printf_P(PSTR("%u\n"),val);
 		return val;
 	}	
 }
@@ -867,7 +902,7 @@ uint32_t mxt_get_info_checksum(uint16_t csum_addr)
 
 	if( (ret = i2c_recv(csum_addr, &csum_array, 3)) != 0 ) //Address 6
 	{
-		printf_P(PSTR("mxt_get_info_checksum(): i2c_recv error: %u"),ret);
+		if(debug_output) printf_P(PSTR("mxt_get_info_checksum(): i2c_recv error: %u"),ret);
 		return 0xffffffff;
 	}
 	else
@@ -952,7 +987,7 @@ uint16_t T100_addr;
 uint8_t T100_size;
 uint8_t T100_reports;
 uint8_t T100_reports_address;
-uint8_t T100_report_id_min;
+uint8_t T100_report_id_min=0;
 uint8_t T100_report_id_max;
 
 
@@ -966,16 +1001,18 @@ void mxt_read_num_messages()
 	uint8_t ret;
 
 	ret = __mxt_read_reg(T44_addr, 1, &T44_msg_count);
-	printf_P(PSTR("num_messages: "));
+	//if(debug_output) printf_P(PSTR("number_messages: "));
 	if(ret)
 	{
-		printf_P(PSTR("error\n"));
+		if(debug_output) printf_P(PSTR("  mxt_read_num_messages() error\n"));
 		T44_msg_count = 0;
 	}
 	else
 	{
-		printf("%u\n",T44_msg_count);
+		//if(debug_output) printf("%u\n",T44_msg_count);
 	}
+	
+	if(T44_msg_count == 0) msgs_available = 0;
 }
 
 void mxt_T46_check_config()
@@ -1090,10 +1127,11 @@ uint8_t mxg_begin(uint16_t addr)
        TWI_Write(addr>>8 & 0x00FF);            // Address high byte
        stat = TWI_GetStatus();
     if (stat != 0x28) return stat;
- 
+    
+    TWI_Stop();
+     
      return 0;
  }
-
 
 
 // T44_msg_count byte + report_id byte + 9 byte msg_content
@@ -1105,31 +1143,44 @@ void proc_msgs()
 	uint8_t crc;
 	uint8_t msgdata[MSG_SIZE];
 	
-	mxt_read_num_messages();
+	if(T100_report_id_min == 0) return; //return if not initialized;
+	
+	//mxt_read_num_messages();
+	
+	/*
+	ret = mxg_begin(T44_addr);
+	if(ret) { 
+		if(debug_output) printf_P(PSTR("mxg_begin error: 0x%02X\n"), ret); 
+		return; 
+	} 
+	*/
 
-	while(T44_msg_count)
-	{
-			ret = mxg_begin(T44_addr);
-			if(ret) { printf_P(PSTR("i2c_recv error: %u\n"), ret); return; }
+	do
+	{			
 			ret = i2c_read(&msgdata,MSG_SIZE);
-			if(ret) { printf_P(PSTR("i2c_recv error: %u\n"), ret); return; }
+			if(ret) { 
+				if(debug_output) printf_P(PSTR("i2c_read error: 0x%02X\n"), ret); 
+				return; 
+			}
 
 			T44_msg_count = msgdata[0];
 			
 			crc=0;
-			printf_P(PSTR("msg:"));
+			if(debug_output) printf_P(PSTR("msg:"));
 			for(uint8_t i = 0; i < MSG_SIZE; i++)
 			{
 					if(i<T5_size) crc=crc8(crc,msgdata[i]);
-					printf_P(PSTR(" %u"),msgdata[i]);
+					if(debug_output) printf_P(PSTR(" %u"),msgdata[i]);
 			}
-			printf_P(PSTR("   crc8: %u \n"),crc);
+			if(debug_output) printf_P(PSTR("   crc8: %u \n"),crc);
 			
 			if( (msgdata[1] >= T100_report_id_min) && (msgdata[1] <= (T100_report_id_min+10)) )
 					proc_T100_msg(msgdata+2); // +2 to skip T44_msg_count and report_id
-	}
+	} while(T44_msg_count > 1);
 	
-	TWI_Stop();	
+	msgs_available = 0;
+	
+	//TWI_Stop();	
 
 }
 
@@ -1151,15 +1202,19 @@ void proc_T100_msg(uint8_t *msg)
 		uint8_t type = (touch_status >> 4) & 0b0111; // 3 bit type (bits 6-4)
 		uint8_t event = touch_status & 0x0F; // event is last 4 bits.
 		
-		printf_P(PSTR("proc_T100_msg() called.\n"));
+		//if(debug_output) printf_P(PSTR("proc_T100_msg() called.\n"));
 		
-		//if(detect && (type == MXT_T100_TYPE_FINGER)) {
+		if(detect && (type == MXT_T100_TYPE_FINGER)) {
 			xpos = msg[1] | ((uint16_t)msg[2]<<8);
 			ypos = msg[3] | ((uint16_t)msg[4]<<8);
+			
+			//swap
+			//ypos = msg[1] | ((uint16_t)msg[2]<<8);
+			//xpos = msg[3] | ((uint16_t)msg[4]<<8);
 			touch_available=1;
 			
-			printf_P(PSTR("touch_status: %02X type: %u  detect: %u  event: %u  xpos: %u  ypos: %u\n"), touch_status, type, detect, event, xpos, ypos);
-		//}
+			if(debug_output) printf_P(PSTR("  touch_status: %02X type: %u  detect: %u  event: %u  xpos: %u  ypos: %u\n"), touch_status, type, detect, event, xpos, ypos);
+		}
 		
 }
 
@@ -1216,8 +1271,8 @@ void mxt_list_types()
 		
 		addr_lsbf = info_blk[i+1] | ((uint16_t)info_blk[i+2] << 8);
 		//addr_msbf = ( (uint16_t)info_blk[i+1]<<8) | info_blk[i+2];
-		printf_P(PSTR("Type: %u, addr: %u size: %u instances: %u reports: %u"), info_blk[i], addr_lsbf, info_blk[i+3], info_blk[i+4], info_blk[i+5] );
-		printf_P(PSTR(" reportid_start: %u  reportid_total: %u  reportid_running_total: %u\n"), reportid_start, reportid_total, reportid_running_total);
+		if(debug_output) printf_P(PSTR("Type: %u, addr: %u size: %u instances: %u reports: %u"), info_blk[i], addr_lsbf, info_blk[i+3], info_blk[i+4], info_blk[i+5] );
+		if(debug_output) printf_P(PSTR(" reportid_start: %u  reportid_total: %u  reportid_running_total: %u\n"), reportid_start, reportid_total, reportid_running_total);
 
 		if(info_blk[i] == 5) 
 		{
@@ -1241,19 +1296,21 @@ void mxt_list_types()
 		}
 	}
 
-	printf_P(PSTR("T100_addr: %u\n"),T100_addr);
-	printf_P(PSTR("T100_report_id_min: %u\n"),T100_report_id_min);
+	if(debug_output) printf_P(PSTR("T100_addr: %u\n"),T100_addr);
+	if(debug_output) printf_P(PSTR("T100_report_id_min: %u\n"),T100_report_id_min);
 
 	#define MXT_T100_XRANGE		13
 	if( (error = i2c_recv(T100_addr + MXT_T100_XRANGE,&xrange,2)) != 0 )
 	{
-		MyPrintpair("i2c reg: ",xrange);
-		MyPrintpairln(" i2c_recv() error: ",error);
+		if(debug_output) MyPrintpair("i2c reg: ",xrange);
+		if(debug_output) MyPrintpairln(" i2c_recv() error: ",error);
 	}
 	else
 	{
-		printf_P(PSTR("xrange: %u\r\n"), (uint16_t) xrange[1]<<8 | xrange[0] );
+		if(debug_output) printf_P(PSTR("xrange: %u\r\n"), (uint16_t) xrange[1]<<8 | xrange[0] );
 	}
+	
+	mxt_read_num_messages();
 
 }
 
@@ -1278,7 +1335,7 @@ void mxt_init()
 
 	if( (status = i2c_recv(0,&info_blk,info_blk_size)) != 0 ) // Start from Register 0, Store array in info_blk, Retrieve (bytes * blk_size)
 	{
-		MyPrintpairln("i2c_recv(info_blk) error: ",status);
+		if(debug_output) MyPrintpairln("i2c_recv(info_blk) error: ",status);
 		return;
 	}
 
@@ -1286,11 +1343,11 @@ void mxt_init()
 	//printf("Header: %u %u %u %u %u %u %u", 1, 2, 3, 4, 5, 6, 7);
 
 	crc = crc24_block(0,info_blk, info_blk_size); // Calc CRC of info block, start with CRC 0
-	printf_P(PSTR("calculated info block crc: %lx \n"), crc);
+	if(debug_output) printf_P(PSTR("calculated info block crc: %lx \n"), crc);
 
 	if (crc != mxt_get_info_checksum(info_blk_size) ) // checksum is the 3 bytes after info block
 	{
-		printf_P(PSTR("Invalid info block checksum."));
+		if(debug_output) printf_P(PSTR("Invalid info block checksum."));
 		return;
 	}
 }
@@ -1574,7 +1631,7 @@ bool CALLBACK_HID_Device_CreateHIDReport(USB_ClassInfo_HID_Device_t* const HIDIn
 
     if (touch_available) 
     {
-		if(debug_output) printf("usb hid digizer reported!\n");
+		//if(debug_output) printf("usb hid digizer reported!\n");
 		touch_available=0;
         DigitizerReport->X = xpos; 
         DigitizerReport->Y = ypos; 
