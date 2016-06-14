@@ -149,11 +149,11 @@ int main(void)
 	
 	//DDRB &= ~(_BV(7)); //PB7 input
 	//PORTB &= ~(1<<PB7); //PB7 low
-	//PORTB |= (_BV(7)); //Set high (input pullup)
+	PORTB |= (_BV(7)); //Set high (input pullup)
 
 	RingBuffer_InitBuffer(&FromHost_Buffer, FromHost_Buffer_Data, sizeof(FromHost_Buffer_Data));
 
-	init_screen();
+	//init_screen();
 	
 	mxt_list_types();
 
@@ -189,7 +189,7 @@ void SetupHardware(void)
 */
 
 }
-
+/*
 ISR (PCINT0_vect) {
 	if ( (PINB &(1<<PB7)) == 0 ) {
 		msgs_available = 1;
@@ -199,6 +199,7 @@ ISR (PCINT0_vect) {
 	}
 	
 }
+*/
 
 void HandleDigitizer()
 {
@@ -559,6 +560,19 @@ int hdmiconv_send(const uint8_t *buf, int count){
 }
 * */
 
+void printDescriptor(const uint8_t *desc,uint16_t size)
+{
+	uint8_t val;
+	
+	for(uint16_t i=0; i<size;i++)
+	{
+		val = pgm_read_byte(desc++);
+		printf_P(PSTR("0x%02X "),val);
+	}
+	printf("\n");
+	
+}
+
 
 #if !defined(ARRAY_SIZE)
     #define ARRAY_SIZE(x) (sizeof((x)) / sizeof((x)[0]))
@@ -668,8 +682,9 @@ void init_screen()
 void i2c_scan()
 {
 	uint8_t ret;
-	for(uint8_t i=0;i<128;i++)
+	for(uint8_t i=1;i<128;i++)
 	{
+		TWI_Stop();
 		ret = i2c_start(i);
 		if( ret == 0 ) {
 			printf_P(PSTR("Found i2c device: %02X\n"),i);
@@ -677,7 +692,6 @@ void i2c_scan()
 		else {
 			printf_P(PSTR("NA: %02X  Ret: %02X\n"),i, ret);
 		}
-		TWI_Stop();
 	}
 }
 
@@ -803,9 +817,25 @@ void execute_command(){
 	{
 		mxt_read_num_messages();
 	}
+	else if(strcmp_P(cmd,PSTR( "screen")) == 0)
+	{
+		init_screen();
+	}
 	else if(strcmp_P(cmd,PSTR( "msg")) == 0)
 	{
 		mxt_read_T5_messages();
+	}
+	else if(strcmp_P(cmd,PSTR( "desc")) == 0)
+	{
+		printDescriptor(&DigitizerReport,DigitizerReport_Size);
+	}
+	else if(strcmp_P(cmd,PSTR( "descsize")) == 0)
+	{
+		printf_P(PSTR("DigitizerReport_Size: %u\n"),DigitizerReport_Size);
+	}
+	else if(strcmp_P(cmd,PSTR( "toshint")) == 0) //Command for Toshiba Interrupt Pin Status
+	{
+		printf_P(PSTR("pe6: %u \n"),  (_BV(PE6)&PINE) );
 	}
 	else if(strcmp_P(cmd,PSTR( "proc")) == 0)
 	{
@@ -842,7 +872,7 @@ void execute_command(){
 		PORTE &= ~(_BV(PE6)); //Set Low
 		_delay_ms(500);
 	}
-	else if(strcmp_P(cmd,PSTR( "pb7")) == 0)
+	else if(strcmp_P(cmd,PSTR( "digint")) == 0) //Digitizer Interrupt Pin Status
 	{
 		printf_P(PSTR("pb7: %u \n"),  (_BV(PB7)&PINB) );
 	}
@@ -889,7 +919,8 @@ uint8_t mxt_get_num_objects()
 	int ret;
 	uint8_t val;
 
-	ret = __mxt_read_reg(6,1,&val);  //Address 6
+	//ret = __mxt_read_reg(6,1,&val);  //Address 6
+	ret = i2c_recv(6,&val,1);  //Address 6
 	if(debug_output) printf_P(PSTR("num objects: "));
 	if(ret){
 		if(debug_output) printf_P(PSTR("error\n"));
@@ -932,7 +963,7 @@ void mxt_header()
 
 	if( (ret = i2c_recv(0,&val,7)) != 0 )
 	{
-		printf_P(PSTR("mxt_header(): i2c_recv error: %u"),ret);
+		printf_P(PSTR("mxt_header(): i2c_recv error: 0x%X"),ret);
 		return;
 	}
 
@@ -1202,67 +1233,67 @@ enum t100_type {
 };
 
 // 9byte msg = [1] touch_status, [2] xpos_lsb, [3] xpos_msb, [4] ypos_lsb, [5] ypos_msb ,  [6:9] aux_data
+
+enum t100_event {
+	MXT_T100_EVENT_NOEVENT = 0,
+	MXT_T100_EVENT_MOVE = 1,
+	MXT_T100_EVENT_UNSUP = 2,
+	MXT_T100_EVENT_SUP = 3,
+	MXT_T100_EVENT_DOWN = 4,
+	MXT_T100_EVENT_UP = 5,
+	MXT_T100_EVENT_UNSUPSUP = 6,
+	MXT_T100_EVENT_UNSUPUP = 7,
+	MXT_T100_EVENT_DOWNSUP = 8,
+	MXT_T100_EVENT_DOWNUP = 9,
+	
+};
+
+
 void proc_T100_msg(uint8_t *msg)
 {
 		uint8_t touch_status;
 		uint8_t detect;
 		uint8_t type;
 		uint8_t event;
-		
-		//if(debug_output) printf_P(PSTR("proc_T100_msg() called.\n"));
 
 		touch_status = msg[0+1]; // bits =  [7] detect, [6:4] type, [3:0] event
 		detect = (touch_status >> 7); //first/ most significant bit is the detect bit.
 		type = (touch_status >> 4) & 0b0111; // 3 bit type (bits 6-4)
 		event = touch_status & 0x0F; // event is last 4 bits.
-		
 		multitouch_id = msg[0] - T100_report_id_min;  	//global var for usb report.
 
+		if(type != MXT_T100_TYPE_FINGER) return; //Everything is a finger.
 
-/*
-		if(event==5 && (type == MXT_T100_TYPE_FINGER)) //event=5 is UP (touch left range)
+		if(event == MXT_T100_EVENT_UP) //Check UP events first because UP events don't set the detect bit.
 		{
-			if(detect == 1) touch_state = 3;
-			else touch_state = 0; 
-			report_available=1;  						//global var for usb report.
-		}
-*/
-
-		if(event==5 && (type == MXT_T100_TYPE_FINGER)) //event=5 is UP (touch left range)
-		{
-			touch_state = 0; 
-			touch_pressure=0;
-			report_available=1;  						//global var for usb report.
+			//Don't update X/Y pos?
+			touch_state = 0b1000; //[3]UnTouch [2]Touch
+			touch_pressure = 0;
+			report_available=1;
+			return;
 		}
 		
-		if(detect && (type == MXT_T100_TYPE_FINGER)) {
-			xpos = 1079-(msg[1+1] | ((uint16_t)msg[2+1]<<8));  //global var for usb report.
-			ypos = 1919-(msg[3+1] | ((uint16_t)msg[4+1]<<8));  //global var for usb report.
-			
-			/*
-			touch_pressure=1;
-			if(event == 4) touch_state = 3;
-			else touch_state = 0;  						//global var for usb report.
-			*/
-			
-			touch_state = 3;
-			if(event == 4) touch_pressure = 1;
-			else touch_pressure = 0;  						//global var for usb report.
-			
-			if(event != 4 && event != 1)
-				if(debug_output)
-					printf_P(PSTR("\n\nOMG EVENT NUM IS NOT 4 or 1 WOW!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n\n"));
-			
-			//swap
-			//ypos = msg[1] | ((uint16_t)msg[2]<<8);
-			//xpos = msg[3] | ((uint16_t)msg[4]<<8);
-			report_available=1;  						//global var for usb report.
-			
+		if(!detect) return;
+
+		if(event == MXT_T100_EVENT_DOWN) {
+			touch_state = 0b0110; // Bits: [0]InRange [1]TipSwitch
+			touch_pressure = 1;
 		}
-
-		if(debug_output) printf_P(PSTR("  touch_status: 0x%02X type: %u  detect: %u  event: %u  xpos: %u  ypos: %u  id:%d\n"), touch_status, type, detect, event, xpos, ypos, multitouch_id);
-
+		else if(event == MXT_T100_EVENT_MOVE) {
+			xpos = 1079 -  (msg[1+1] | ((uint16_t)msg[2+1]<<8));  //X global var for usb report.
+			ypos = 1919 -  (msg[3+1] | ((uint16_t)msg[4+1]<<8));  //Y global var for usb report.
+			touch_state = 0b0111; // Bits: [0]InRange [1]TipSwitch
+			touch_pressure = 1;
+		} 
+		else {
+			if(debug_output) printf_P(PSTR("\n\nUNKNOWN TOUCH STATE!!!!!!!!!!!!!!!!!!!!!!!!!\n\n"));
+			return;
+		}
 		
+		//Only (Detected) && (Finger) &&  (MOVE)||(Down) events allowed this far.
+
+        if(debug_output) printf_P(PSTR("  touch_status: 0x%02X type: %u  detect: %u  event: %u  xpos: %u  ypos: %u  id:%d\n"), touch_status, type, detect, event, xpos, ypos, multitouch_id);
+		report_available = 1;
 }
 
 void mxt_list_types()
@@ -1277,6 +1308,8 @@ void mxt_list_types()
 	uint8_t reportid_total;
 	uint8_t instances;
 	uint8_t reportid_running_total=0;
+	
+	_delay_ms(1000);
 
 	mxt_init();
 
@@ -1663,8 +1696,8 @@ bool CALLBACK_HID_Device_CreateHIDReport(USB_ClassInfo_HID_Device_t* const HIDIn
 		//DigitizerReport->Tip_and_InRange       = (status & MXT_RELEASE) ? 0x00 : 0x03; 
 		DigitizerReport->Tip_and_InRange       = touch_state; //0x03; //0x00 down 0x03 up?
 		DigitizerReport->Contact_identifier    = multitouch_id;
-		DigitizerReport->Contact_count_max     = 10;	
-		DigitizerReport->Pressure              = touch_pressure;	
+		DigitizerReport->Contact_count_max     = 2;	
+		//DigitizerReport->Pressure              = touch_pressure;	
 
         *ReportSize = sizeof(USB_DigitizerReport_Data_t);
     } else {

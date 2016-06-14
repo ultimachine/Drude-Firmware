@@ -105,5 +105,9 @@
 		                                    const void** const DescriptorAddress)
 		                                    ATTR_WARN_UNUSED_RESULT ATTR_NON_NULL_PTR_ARG(3);
 
+		const USB_Descriptor_HIDReport_Datatype_t DigitizerReport[];
+		uint16_t DigitizerReport_Size;
+		                               
+
 #endif
 

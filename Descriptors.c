@@ -49,6 +49,8 @@ const USB_Descriptor_HIDReport_Datatype_t PROGMEM DigitizerReport[] =
 	HID_DESCRIPTOR_DIGITIZER()
 };
 
+uint16_t DigitizerReport_Size = sizeof(DigitizerReport);
+
 /** Device descriptor structure. This descriptor, located in FLASH memory, describes the overall
  *  device characteristics, including the supported USB version, control endpoint size and the
  *  number of device configurations. The descriptor is read out by the USB host when the enumeration
@@ -65,8 +67,8 @@ const USB_Descriptor_Device_t PROGMEM DeviceDescriptor =
 
 	.Endpoint0Size          = FIXED_CONTROL_ENDPOINT_SIZE,
 
-	.VendorID               = 0x03EB,
-	.ProductID              = 0x2062,
+	.VendorID               = 0x2341, //0x03EB,
+	.ProductID              = 0x8036, //0x2062,
 	.ReleaseNumber          = VERSION_BCD(00.01),
 
 	.ManufacturerStrIndex   = 0x01,
@@ -254,9 +256,9 @@ const USB_Descriptor_String_t PROGMEM LanguageString =
  */
 const USB_Descriptor_String_t PROGMEM ManufacturerString =
 {
-	.Header                 = {.Size = USB_STRING_LEN(17), .Type = DTYPE_String},
+	.Header                 = {.Size = USB_STRING_LEN(11), .Type = DTYPE_String},
 
-	.UnicodeString          = L"Intelligent Agent"
+	.UnicodeString          = L"UltiMachine"
 };
 
 /** Product descriptor string. This is a Unicode string containing the product's details in human readable form,
