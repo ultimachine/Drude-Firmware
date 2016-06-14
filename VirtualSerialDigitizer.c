@@ -116,7 +116,8 @@ static FILE mystdout = FDEV_SETUP_STREAM(putchar_printf, NULL, _FDEV_SETUP_WRITE
 static FILE  mystdin = FDEV_SETUP_STREAM(NULL, my_getchar, _FDEV_SETUP_READ);
 
 #define RESET_PIN (_BV(PB3))
-void init_screen();
+#define RESETN_PIN (_BV(PB6))
+void init_screen(uint8_t);
 
 uint8_t debug_output=0;
 
@@ -128,7 +129,6 @@ uint8_t touch_pressure=0;
 
 uint8_t report_available=0;
 uint8_t msgs_available=0;
-
 
 /** Main program entry point. This routine contains the overall program flow, including initial
  *  setup of all components and the main program loop.
@@ -143,17 +143,35 @@ int main(void)
 	//LEDs_SetAllLEDs(LEDMASK_USB_NOTREADY);
 	GlobalInterruptEnable();
 
+	//Eval Prototype Sharp Reset Pin
 	//DDRB &= ~RESET_PIN; //Set Input
 	PORTB |= RESET_PIN; //Set High
 	DDRB |= RESET_PIN; //Set Output
+
+	//Drude Sharp LCD Reset PIN
+	PORTF |= RESETN_PIN; //Set High
+	DDRF |= RESETN_PIN; //Set Output
 	
+	//Digitizer Interrupt
 	//DDRB &= ~(_BV(7)); //PB7 input
 	//PORTB &= ~(1<<PB7); //PB7 low
 	PORTB |= (_BV(7)); //Set high (input pullup)
+	
+	//IP4787CZ32Y HDMI ESD interface chip (HDMI_ACT PIN) Active-High (Test-Point 12)
+	PORTF |= (_BV(PF1)); //Set high (input pullup)
+	
+	//Toshiba Interrupt Pin
+	PORTE |= (_BV(PE6)); //Set high (input pullup)
+	//Toshiba Standby Pin
+	PORTF |= (_BV(PF4)); //Set high (input pullup)
+	//Toshiba Reset Pin - Active Low
+	PORTC |= (_BV(PC7)); //Set high (input pullup)
+
+
 
 	RingBuffer_InitBuffer(&FromHost_Buffer, FromHost_Buffer_Data, sizeof(FromHost_Buffer_Data));
 
-	//init_screen();
+	init_screen(0x1F); //magic number!
 	
 	mxt_list_types();
 
@@ -541,7 +559,8 @@ SEQ_END
 
 
 
-#define HDMICONV_ADDR 0x0F //0x1F
+#define HDMICONV_ADDR0 0x0F //0x0F on eval, 0x1F on drude
+#define HDMICONV_ADDR1 0x1F //0x0F on eval, 0x1F on drude
 
 /*
 // THIS FUNCTION UNDER CONSTRUCTION
@@ -580,7 +599,7 @@ void printDescriptor(const uint8_t *desc,uint16_t size)
 
 uint16_t init_size = ARRAY_SIZE(init_sequence);
 
-uint8_t print_sequence(const uint8_t *buf)
+uint8_t print_sequence(const uint8_t *buf, uint8_t i2c_addr)
 {
 	uint8_t value;
 	uint8_t size;
@@ -614,14 +633,20 @@ uint8_t print_sequence(const uint8_t *buf)
 		else if(addr_msb == SEQ_RESET) {
 			if(debug_output) printf_P(PSTR("SEQ_RESET\n"), value);
 
+			//Eval SharpLCD Reset Pin
 			PORTB |= RESET_PIN; //Set High
 			DDRB |= RESET_PIN; //Set Output
+			//Drude SharpLCD Reset Pin
+			PORTB |= RESETN_PIN; //Set High
+			DDRB |= RESETN_PIN; //Set Output
 			_delay_us(10);	//Wait 10 microseconds
 			
-			PORTB &= ~(RESET_PIN); //Set Low
+			PORTB &= ~(RESETN_PIN); //Drude Reset Pin Set Low
+			PORTB &= ~(RESET_PIN); //Eval Reset Pin Set Low
 			_delay_us(10);	//Wait 10 microseconds
 			
-			PORTB |= RESET_PIN; //Set High
+			PORTB |= RESET_PIN; //Eval Reset Pin Set High
+			PORTB |= RESETN_PIN; //Drude Toshina Reset Pin Set High
 			_delay_ms(10);
 			//DDRB &= ~(RESET_PIN); //Set Input
 
@@ -639,7 +664,7 @@ uint8_t print_sequence(const uint8_t *buf)
 		stat = TWI_GetStatus();
 		if (stat != 0x08) { if(debug_output) printf_P(PSTR("\nTWI_Start()\n")); return stat; }
 
-		TWI_Write((HDMICONV_ADDR<<1));		// Chip address + write
+		TWI_Write((i2c_addr<<1));		// Chip address + write
 		stat = TWI_GetStatus();
 		if (stat != 0x18) { if(debug_output) printf_P(PSTR("\nTWI_Write(HDMICONV_ADDR)\n")); return stat; }
 
@@ -670,13 +695,13 @@ uint8_t print_sequence(const uint8_t *buf)
 
 }
 
-void init_screen()
+void init_screen(uint8_t i2c_address)
 {
 	//_delay_ms(110); //TOO FAST, WILL NOT TURN ON.
 	//_delay_ms(115); //WORKS
 	//_delay_ms(112); //SOMETIMES WORKED THEN STOPPED WORKING
 	_delay_ms(150);
-	print_sequence(init_sequence);
+	print_sequence(init_sequence,i2c_address);
 }
 
 void i2c_scan()
@@ -819,7 +844,7 @@ void execute_command(){
 	}
 	else if(strcmp_P(cmd,PSTR( "screen")) == 0)
 	{
-		init_screen();
+		init_screen(HDMICONV_ADDR0);
 	}
 	else if(strcmp_P(cmd,PSTR( "msg")) == 0)
 	{
@@ -845,11 +870,20 @@ void execute_command(){
 	{
 		mxt_write_T6_report_all();
 	}
-	else if(strcmp_P(cmd,PSTR( "seq")) == 0)
+	else if(strcmp_P(cmd,PSTR( "seq0")) == 0)
 	{
 		uint8_t retval;
 		debug_output=1;
-		retval = print_sequence(init_sequence);
+		retval = print_sequence(init_sequence,HDMICONV_ADDR0);
+		TWI_Stop();
+		printf_P(PSTR("\ni2c RET: %02X\n"),retval);
+		debug_output=0;
+	}
+	else if(strcmp_P(cmd,PSTR( "seq1")) == 0)
+	{
+		uint8_t retval;
+		debug_output=1;
+		retval = print_sequence(init_sequence,HDMICONV_ADDR1);
 		TWI_Stop();
 		printf_P(PSTR("\ni2c RET: %02X\n"),retval);
 		debug_output=0;
