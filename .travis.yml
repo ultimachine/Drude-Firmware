@@ -1,0 +1,9 @@
+language: c
+before_install:
+  - sudo apt-get update -q
+install:
+  - sudo apt-get install avr-libc gcc-avr
+script:
+  - make
+notifications:
+  email: false
