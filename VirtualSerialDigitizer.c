@@ -145,8 +145,8 @@ int main(void)
 
 	//Eval Prototype Sharp Reset Pin
 	//DDRB &= ~RESET_PIN; //Set Input
-	PORTB |= RESET_PIN; //Set High
-	DDRB |= RESET_PIN; //Set Output
+	//PORTB |= RESET_PIN; //Set High
+	//DDRB |= RESET_PIN; //Set Output
 
 	//Drude Sharp LCD Reset PIN
 	PORTF |= RESETN_PIN; //Set High
@@ -167,6 +167,14 @@ int main(void)
 	//Toshiba Reset Pin - Active Low
 	PORTC |= (_BV(PC7)); //Set high (input pullup)
 
+	//LCD-CABC
+	//PORTF |= (_BV(PF7)); //Set high (defaults to input pullup)
+	//DDRF &= ~(_BV(PF7)); //Set output
+	//PORTF |= (_BV(PF7)); //Set low
+
+	//LED-PWM
+	//DDRD &= ~(_BV(PD6)); //Set output
+	PORTD |= (_BV(PD6)); //Set high (defaults to input pullup)
 
 
 	RingBuffer_InitBuffer(&FromHost_Buffer, FromHost_Buffer_Data, sizeof(FromHost_Buffer_Data));
