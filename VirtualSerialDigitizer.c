@@ -173,8 +173,9 @@ int main(void)
 	//PORTF |= (_BV(PF7)); //Set low
 
 	//LED-PWM
-	//DDRD &= ~(_BV(PD6)); //Set output
 	PORTD |= (_BV(PD6)); //Set high (defaults to input pullup)
+	//PORTD &= ~(_BV(PD6)); //Set low
+	//DDRD &= ~(_BV(PD6)); //Set output
 
 
 	RingBuffer_InitBuffer(&FromHost_Buffer, FromHost_Buffer_Data, sizeof(FromHost_Buffer_Data));
